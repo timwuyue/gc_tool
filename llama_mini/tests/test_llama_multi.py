@@ -137,7 +137,7 @@ class TestLlamaMini(unittest.TestCase):
         node = LlamaMini()
         with mock.patch("nodes.chat_completion", return_value="x"), \
              mock.patch("nodes._model_present", return_value=True), \
-             mock.patch("nodes._unload_comfy_models") as unload:
+             mock.patch("nodes._unload_local_models") as unload:
             node.generate(images=None, unload_before=True)
         unload.assert_called_once()
 
@@ -150,18 +150,7 @@ class TestLlamaMini(unittest.TestCase):
 
 
 
-    def test_unload_before_calls_free_on_local_server_url(self):
-        # unload_before frees the ComfyUI at whatever Local Server URL is set to.
-        node = LlamaMini()
-        cfg = nodes._read_config()
-        cfg["local_server_url"] = "http://49.233.182.221:8188"
-        with mock.patch("nodes.chat_completion", return_value="x"),              mock.patch("nodes._model_present", return_value=True),              mock.patch("nodes._read_config", return_value=cfg),              mock.patch("nodes._unload_comfy_models") as unload:
-            node.generate(images=None, unload_before=True)
-        unload.assert_called_once()
-        self.assertEqual(unload.call_args.args[0], "http://49.233.182.221:8188")
-
-    def test_unload_comfy_models_inprocess_and_remote(self):
-        # in-process unload via comfy.model_management + remote POST /free
+    def test_unload_local_models_inprocess(self):
         class FakeMM:
             def __init__(self):
                 self.unload = 0
@@ -177,37 +166,44 @@ class TestLlamaMini(unittest.TestCase):
         mm_mod.unload_all_models = fake.unload_all_models
         mm_mod.soft_empty_cache = fake.soft_empty_cache
         comfy_mod.model_management = mm_mod
-        with mock.patch.dict("sys.modules", {"comfy": comfy_mod, "comfy.model_management": mm_mod}),              mock.patch("nodes.requests.post") as post:
-            post.return_value.status_code = 200
-            nodes._unload_comfy_models("http://49.233.182.221:8188")
+        with mock.patch.dict("sys.modules", {"comfy": comfy_mod, "comfy.model_management": mm_mod}):
+            nodes._unload_local_models()
         self.assertEqual(fake.unload, 1)
         self.assertEqual(fake.soft, 1)
+
+    def test_free_remote_posts_free(self):
+        with mock.patch("nodes.requests.post") as post:
+            post.return_value.status_code = 200
+            nodes._free_remote("http://49.233.182.221:8188")
         url, kwargs = post.call_args
         self.assertEqual(url[0], "http://49.233.182.221:8188/free")
         self.assertEqual(kwargs["json"], {"unload_models": True, "free_memory": True})
 
-    def test_unload_comfy_models_local_only_no_remote(self):
-        # empty comfy_url: only in-process unload, no HTTP call
-        class FakeMM:
-            def unload_all_models(self):
-                pass
-            def soft_empty_cache(self):
-                pass
-        import types
-        comfy_mod = types.ModuleType("comfy")
-        mm_mod = types.ModuleType("comfy.model_management")
-        mm_mod.unload_all_models = FakeMM().unload_all_models
-        mm_mod.soft_empty_cache = FakeMM().soft_empty_cache
-        comfy_mod.model_management = mm_mod
-        with mock.patch.dict("sys.modules", {"comfy": comfy_mod, "comfy.model_management": mm_mod}),              mock.patch("nodes.requests.post") as post:
-            nodes._unload_comfy_models("")
+    def test_free_remote_empty_url_noop(self):
+        with mock.patch("nodes.requests.post") as post:
+            nodes._free_remote("")
         post.assert_not_called()
+
+    def test_unload_before_remote_triggers_free_on_local_server_url(self):
+        node = LlamaMini()
+        cfg = nodes._read_config()
+        cfg["local_server_url"] = "http://49.233.182.221:8188"
+        with mock.patch("nodes.chat_completion", return_value="x"),              mock.patch("nodes._model_present", return_value=True),              mock.patch("nodes._read_config", return_value=cfg),              mock.patch("nodes._free_remote") as free:
+            node.generate(images=None, unload_before_remote=True)
+        free.assert_called_once()
+        self.assertEqual(free.call_args.args[0], "http://49.233.182.221:8188")
+
+    def test_unload_before_remote_off_skips(self):
+        node = LlamaMini()
+        with mock.patch("nodes.chat_completion", return_value="x"),              mock.patch("nodes._model_present", return_value=True),              mock.patch("nodes._free_remote") as free:
+            node.generate(images=None, unload_before_remote=False)
+        free.assert_not_called()
 
     def test_unload_before_off_skips_comfy_unload(self):
         node = LlamaMini()
         with mock.patch("nodes.chat_completion", return_value="x"), \
              mock.patch("nodes._model_present", return_value=True), \
-             mock.patch("nodes._unload_comfy_models") as unload:
+             mock.patch("nodes._unload_local_models") as unload:
             node.generate(images=None, unload_before=False)
         unload.assert_not_called()
 
@@ -265,7 +261,7 @@ class TestLlamaMini(unittest.TestCase):
         req = inputs["required"]
         opt = inputs["optional"]
         # only seed, unload_before and unload_after remain as widgets
-        self.assertEqual(set(req.keys()), {"seed", "unload_before", "unload_after"})
+        self.assertEqual(set(req.keys()), {"seed", "unload_before", "unload_before_remote", "unload_after"})
         self.assertEqual(req["seed"][1]["default"], -1)
         self.assertEqual(req["unload_after"][1]["default"], False)
         # no other widgets (fixed values in code)

@@ -160,17 +160,12 @@ def _log(*args):
     print("[llama_mini]", *args, flush=True)
 
 
-def _unload_comfy_models(comfy_url: str = ""):
-    """Free ComfyUI's loaded models + PyTorch cache.
+def _unload_local_models():
+    """In-process unload of this ComfyUI's loaded models + PyTorch cache.
 
-    Primary: in-process unload via comfy.model_management (llama_mini runs
-    inside this ComfyUI, so this is the reliable way — always works no
-    matter where the node sits in the workflow).
-    Optional: if comfy_url points at a remote ComfyUI, additionally POST
-    /free there (same endpoint as Edit > "Unload models and free up
-    memory").
+    llama_mini runs inside this ComfyUI, so this always frees the local
+    VRAM regardless of where the node sits in the workflow.
     """
-    # 1) Local, in-process — guaranteed to free this ComfyUI's VRAM.
     try:
         from comfy import model_management as _mm
 
@@ -180,23 +175,27 @@ def _unload_comfy_models(comfy_url: str = ""):
         _log(f"本地卸载失败（comfy.model_management 不可用）: {_exc}")
     gc.collect()
 
-    # 2) Remote ComfyUI (only when a remote URL is configured).
-    if comfy_url and comfy_url.strip():
-        url = comfy_url.rstrip("/") + "/free"
-        try:
-            resp = requests.post(
-                url,
-                json={"unload_models": True, "free_memory": True},
-                timeout=30,
-                # Direct connection; a system proxy can stall or time out.
-                proxies={"http": None, "https": None},
-            )
-            if resp.status_code != 200:
-                _log(f"POST /free failed: HTTP {resp.status_code} ({url})")
-            else:
-                _log(f"freed memory via {url}")
-        except Exception as _exc:
-            _log(f"POST /free failed: {_exc} ({url})")
+
+def _free_remote(comfy_url: str):
+    """POST /free to a remote ComfyUI instance (same endpoint as Edit >
+    "Unload models and free up memory"). No-op when the URL is empty."""
+    if not comfy_url or not comfy_url.strip():
+        return
+    url = comfy_url.rstrip("/") + "/free"
+    try:
+        resp = requests.post(
+            url,
+            json={"unload_models": True, "free_memory": True},
+            timeout=30,
+            # Direct connection; a system proxy can stall or time out.
+            proxies={"http": None, "https": None},
+        )
+        if resp.status_code != 200:
+            _log(f"POST /free failed: HTTP {resp.status_code} ({url})")
+        else:
+            _log(f"freed memory via {url}")
+    except Exception as _exc:
+        _log(f"POST /free failed: {_exc} ({url})")
 
 
 def _ensure_model_loaded(server_url, api_key, model_path, timeout):
@@ -231,9 +230,12 @@ class LlamaMini:
         return {
             "required": {
                 "seed": ("INT", {"default": -1, "min": -1, "max": 2147483647}),
-                # Unload ComfyUI models + free cache BEFORE the llama request
-                # (frees VRAM so llama.cpp does not OOM or slow down).
+                # Unload THIS ComfyUI's models + free cache (in-process,
+                # always works) BEFORE the llama request.
                 "unload_before": ("BOOLEAN", {"default": False}),
+                # Additionally POST /free to the remote ComfyUI at
+                # Local Server URL.
+                "unload_before_remote": ("BOOLEAN", {"default": False}),
                 # Unload the model right after this node finishes (frees VRAM/RAM).
                 "unload_after": ("BOOLEAN", {"default": False}),
             },
@@ -250,6 +252,7 @@ class LlamaMini:
         self,
         seed: int = -1,
         unload_before: bool = False,
+        unload_before_remote: bool = False,
         unload_after: bool = False,
         prompt: str | None = None,
         system: str | None = None,
@@ -273,12 +276,12 @@ class LlamaMini:
         debug_log = bool(cfg.get("debug_log", False))
         local_server_url = cfg.get("local_server_url", "http://127.0.0.1:8188")
 
-        # Free ComfyUI's VRAM before llama runs (avoid OOM/slowness when
-        # a previous workflow stage left SD models loaded). The target
-        # ComfyUI instance is whatever Local Server URL is set to — local
-        # or remote — via its POST /free endpoint.
+        # Free VRAM before the llama request (avoid OOM/slowness when a
+        # previous workflow stage left SD models loaded).
         if unload_before:
-            _unload_comfy_models(local_server_url)
+            _unload_local_models()
+        if unload_before_remote:
+            _free_remote(local_server_url)
 
         image_list = list(images) if images is not None else []
         if images is not None and hasattr(images, "dim") and images.dim() == 3:
