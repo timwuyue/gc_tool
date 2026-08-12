@@ -49,7 +49,7 @@
 
 ## 安装
 
-把 `GC_Tool/llama_mini` 文件夹放到 ComfyUI 的 `custom_nodes/` 下，重启 ComfyUI。依赖仅 `requests` + `pillow` + `numpy`（ComfyUI 自带）。
+把仓库（含 `llama_mini` 子目录）clone 到 ComfyUI 的 `custom_nodes/` 下，重启 ComfyUI。依赖仅 `requests` + `pillow` + `numpy`（ComfyUI 自带）。
 
 ## 行为
 
@@ -61,5 +61,5 @@
 ## 开发
 
 ```bash
-cd GC_Tool/llama_mini && python -m unittest discover -s tests
+cd llama_mini && python -m unittest discover -s tests
 ```

@@ -32,4 +32,4 @@ git clone https://github.com/timwuyue/gc_tool.git
 ## 说明
 
 - 节点默认配置针对 `Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q8_0` 多模态模型，可通过设置面板修改
-- 详细用法见 `GC_Tool/llama_mini/README.md`
+- 详细用法见 `llama_mini/README.md`
