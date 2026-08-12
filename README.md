@@ -11,10 +11,10 @@ ComfyUI 自定义节点包，包含两个节点：
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/timwuyue/gc_tool.git GC_Tool
+git clone https://github.com/timwuyue/gc_tool.git
 ```
 
-重启 ComfyUI 即可。依赖仅 `requests` + `pillow` + `numpy`（ComfyUI 自带，无需额外安装）。
+重启 ComfyUI 即可（clone 后的 `gc_tool` 目录本身就是节点包）。依赖仅 `requests` + `pillow` + `numpy`（ComfyUI 自带，无需额外安装）。
 
 ## llama_mini 节点
 
