@@ -6,12 +6,12 @@ from .unload.nodes import ModelUnload
 
 NODE_CLASS_MAPPINGS = {
     "llama_mini": LlamaMini,
-    "GC_unload": ModelUnload,
+    "unload_clear": ModelUnload,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "llama_mini": "llama_mini",
-    "GC_unload": "卸载模型",
+    "unload_clear": "unload_clear",
 }
 
 # Frontend extension directory (settings registration), relative to this package.

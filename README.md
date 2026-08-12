@@ -5,7 +5,7 @@ ComfyUI 自定义节点包，包含两个节点：
 | 节点 | 分类 | 功能 |
 |---|---|---|
 | **llama_mini** | `GC_Tool/llama_mini` | 视觉/文本多模态 LLM 节点：接入 llama.cpp server，多图综合反推、纯文本生成 |
-| **卸载模型** | `GC_Tool` | 通过 ComfyUI 的 `POST /free` 卸载指定机器（本机/远程）的模型并清缓存 |
+| **unload_clear** | `GC_Tool` | 通过 ComfyUI 的 `POST /free` 卸载指定机器（本机/远程）的模型并清缓存 |
 
 ## 安装
 
@@ -25,7 +25,7 @@ git clone https://github.com/timwuyue/gc_tool.git
 - **面板开关**：`seed`（采样种子）、`unload_before`（执行前通过 `POST /free` 卸载指定 ComfyUI 的模型，防爆显存）、`unload_after`（执行后卸载 llama server 模型，需 router 模式）
 - **建议**：llama.cpp server 用 router 模式启动（不带 `-m`，`--models-dir` 加载），支持模型热加载/卸载
 
-## 卸载模型节点
+## unload_clear 节点
 
 参数 `unload_models`（卸载模型）+ `clear_cache`（清缓存），等价于 ComfyUI 菜单"编辑 → 卸载模型 / 卸载模型和执行缓存"。带 `*` 透传输入/输出，可插在 workflow 任意位置。
 
