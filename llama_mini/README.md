@@ -23,7 +23,7 @@
 | 开关 | 默认 | 说明 |
 |---|---|---|
 | `seed` | -1 | 采样种子；-1 = 随机 |
-| `unload_before` | false | 执行前先向 `Local Server URL` 指定的 ComfyUI 发 `POST /free`（卸载模型 + 清缓存，≈ 菜单"卸载模型和执行缓存"）。**填本机地址卸载本机、填远程地址卸载远程机** |
+| `unload_before` | false | 执行前**进程内**卸载 ComfyUI 已加载的模型并清缓存（llama_mini 所在的本机 ComfyUI，任何工作流位置都生效）；若 `Local Server URL` 填了远程 ComfyUI 地址，还会额外 `POST /free` 远程机 |
 
 设置面板：**`Local Server URL`**（默认 `http://127.0.0.1:8188`）——`unload_before` 的卸载目标 ComfyUI 地址（本机或远程都行，通过 HTTP `POST /free` 卸载该机器上的模型）。
 | `unload_after` | false | 执行后立即卸载 llama server 模型（router 模式支持） |

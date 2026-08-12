@@ -160,29 +160,43 @@ def _log(*args):
     print("[llama_mini]", *args, flush=True)
 
 
-def _unload_comfy_models(comfy_url: str, timeout: int = 30):
-    """Ask the ComfyUI instance at `comfy_url` (local or remote) to unload
-    its models and free the PyTorch cache via POST /free — the same endpoint
-    behind the menu action "Edit > Unload models and free up memory".
+def _unload_comfy_models(comfy_url: str = ""):
+    """Free ComfyUI's loaded models + PyTorch cache.
 
-    Called before the llama request when unload_before is on, freeing VRAM
-    on the machine that hosts ComfyUI (and usually the llama server too).
+    Primary: in-process unload via comfy.model_management (llama_mini runs
+    inside this ComfyUI, so this is the reliable way — always works no
+    matter where the node sits in the workflow).
+    Optional: if comfy_url points at a remote ComfyUI, additionally POST
+    /free there (same endpoint as Edit > "Unload models and free up
+    memory").
     """
-    url = comfy_url.rstrip("/") + "/free"
+    # 1) Local, in-process — guaranteed to free this ComfyUI's VRAM.
     try:
-        resp = requests.post(
-            url,
-            json={"unload_models": True, "free_memory": True},
-            timeout=timeout,
-            # Direct connection; a system proxy can stall or time out.
-            proxies={"http": None, "https": None},
-        )
-        if resp.status_code != 200:
-            _log(f"POST /free failed: HTTP {resp.status_code} ({url})")
-        else:
-            _log(f"freed memory via {url}")
+        from comfy import model_management as _mm
+
+        _mm.unload_all_models()
+        _mm.soft_empty_cache()
     except Exception as _exc:
-        _log(f"POST /free failed: {_exc} ({url})")
+        _log(f"本地卸载失败（comfy.model_management 不可用）: {_exc}")
+    gc.collect()
+
+    # 2) Remote ComfyUI (only when a remote URL is configured).
+    if comfy_url and comfy_url.strip():
+        url = comfy_url.rstrip("/") + "/free"
+        try:
+            resp = requests.post(
+                url,
+                json={"unload_models": True, "free_memory": True},
+                timeout=30,
+                # Direct connection; a system proxy can stall or time out.
+                proxies={"http": None, "https": None},
+            )
+            if resp.status_code != 200:
+                _log(f"POST /free failed: HTTP {resp.status_code} ({url})")
+            else:
+                _log(f"freed memory via {url}")
+        except Exception as _exc:
+            _log(f"POST /free failed: {_exc} ({url})")
 
 
 def _ensure_model_loaded(server_url, api_key, model_path, timeout):
