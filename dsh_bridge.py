@@ -17,6 +17,11 @@ _log = logging.getLogger("gc_tool.dsh_bridge")
 DSH_BASE = "http://127.0.0.1:3080"
 DEFAULT_CWD = r"E:\ComfyTV"
 
+# On first window open (sinceSeq=-1) only hand back this many most-recent
+# events — enough to show the tail of the conversation without rendering 200
+# stream chunks at once. Incremental polls still get everything newer.
+FIRST_OPEN_LIMIT = 40
+
 routes = PromptServer.instance.routes
 
 
@@ -107,8 +112,12 @@ async def dsh_events(request):
     except ValueError:
         since = -1
     try:
-        # Fetch a generous window so a reconnect/poll gap never drops events
-        # (chunk-level events arrive in bursts; 4 messages is far too small).
+        # Two distinct windows:
+        #  - first open (sinceSeq=-1): fetch a large history server-side but
+        #    only hand back the most recent FIRST_OPEN_LIMIT events so the
+        #    window renders instantly (200 events of stream chunks is heavy).
+        #  - incremental polls (sinceSeq>=0): return everything newer so a
+        #    reconnect/poll gap never drops events.
         r = await asyncio.to_thread(
             _rpc, "session.history", {"sessionId": sid, "maxMessages": 200})
         evs = (r.get("result") or {}).get("value", {}).get("events", [])
@@ -123,6 +132,8 @@ async def dsh_events(request):
         # history may return newest-first; always hand events to the client in
         # ascending seq order so streaming text is never scrambled
         out.sort(key=lambda ev: ev.get("seq") or 0)
+        if since < 0 and len(out) > FIRST_OPEN_LIMIT:
+            out = out[-FIRST_OPEN_LIMIT:]
         return web.json_response({"ok": True, "events": out, "lastSeq": last})
     except Exception as e:
         _log.exception("dsh/events failed")
