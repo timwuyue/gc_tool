@@ -459,16 +459,25 @@
       el.style.color = "#fff";
       el.style.whiteSpace = "pre-wrap";
       el.textContent = text;
+      msgs.appendChild(el);
     } else {
       el.style.alignSelf = "flex-start";
       el.style.background = "#21262d";
       el.style.color = "#e6edf3";
-      el.__md = "";
-      el.innerHTML = renderMd(text) || "\u200b";
+      el.__md = text || "";
+      // Defer insertion: an empty assistant bubble (created by thinking or
+      // tool events) must NOT appear in the DOM until it has real content.
+      if (el.__md) {
+        el.innerHTML = renderMd(el.__md) || "\u200b";
+        msgs.appendChild(el);
+      } else {
+        el.__deferred = true;
+      }
     }
     el.dataset.role = role;
-    msgs.appendChild(el);
-    msgs.scrollTop = msgs.scrollHeight;
+    if (!el.__deferred) {
+      msgs.scrollTop = msgs.scrollHeight;
+    }
     return el;
   }
 
@@ -479,6 +488,14 @@
     return curAgentEl;
   }
 
+  function attachAgentEl(el) {
+    if (!el || !el.__deferred) return;
+    el.__deferred = false;
+    var msgs = document.getElementById("dsh-msgs");
+    msgs.appendChild(el);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
   function toolChipEl(index) {
     if (toolChips[index]) return toolChips[index];
     var msgs = document.getElementById("dsh-msgs");
@@ -487,7 +504,12 @@
       "align-self:flex-start;background:#2d3748;color:#93c5fd;font-size:11px;" +
       "padding:2px 8px;border-radius:10px;font-family:monospace;";
     chip.textContent = "tool...";
-    msgs.insertBefore(chip, currentAgentEl());
+    // only insert above an existing agent bubble; never force one into being
+    if (curAgentEl && curAgentEl.isConnected) {
+      msgs.insertBefore(chip, curAgentEl);
+    } else {
+      msgs.appendChild(chip);
+    }
     toolChips[index] = chip;
     return chip;
   }
@@ -495,6 +517,8 @@
   var mdTimer = null;
   function appendAgentText(el, delta) {
     el.__md = (el.__md || "") + delta;
+    // attach the deferred bubble now that it has content
+    attachAgentEl(el);
     // stream as plain text (cheap); re-render markdown on pause or completion
     el.textContent = el.__md;
     if (mdTimer) clearTimeout(mdTimer);
@@ -516,14 +540,18 @@
           chip.dataset.name = c.name;
           chip.textContent = "\u2699 " + c.name;
         }
-      } else if (ct === "reasoning-delta" && c.text) {
-        var el = currentAgentEl();
-        if (!el.dataset.thinking) {
-          el.dataset.thinking = "1";
-          el.style.opacity = "0.7";
+      } else if (ct === "reasoning-delta") {
+        // thinking: just note it on the current bubble if one exists;
+        // NEVER create a bubble for reasoning alone
+        if (curAgentEl && curAgentEl.isConnected && !curAgentEl.dataset.thinking) {
+          curAgentEl.dataset.thinking = "1";
+          curAgentEl.style.opacity = "0.7";
         }
       } else if (ct === "block-end" && c.block && c.block.type === "text") {
-        currentAgentEl().style.opacity = "1";
+        if (curAgentEl && curAgentEl.isConnected) {
+          curAgentEl.style.opacity = "1";
+          delete curAgentEl.dataset.thinking;
+        }
       }
     } else if (t === "assistant/message") {
       var msg = ev.data && ev.data.message;
@@ -536,8 +564,14 @@
         if (texts.length) {
           var el = currentAgentEl();
           el.__md = texts.join("\n");
+          attachAgentEl(el);
           el.innerHTML = renderMd(el.__md) || "\u200b";
           el.style.opacity = "1";
+          delete el.dataset.thinking;
+        } else if (curAgentEl && curAgentEl.isConnected && curAgentEl.__deferred) {
+          // empty assistant message: drop the placeholder bubble entirely
+          curAgentEl.remove();
+          curAgentEl = null;
         }
         for (var j = 0; j < msg.content.length; j++) {
           var tb = msg.content[j];
@@ -847,9 +881,13 @@
 
   function startPoll() {
     stopPoll();
-    // serial chain: never overlap requests (avoids burst lag)
+    // serial chain: never overlap requests (avoids burst lag). The chain only
+    // continues while the websocket is NOT the active stream — once the ws is
+    // open it takes over and the chain stops, so a message never arrives twice
+    // (once via poll, once via ws).
     var loop = function () {
       poll().then(function () {
+        if (ws && ws.readyState === WebSocket.OPEN) { pollTimer = null; return; }
         pollTimer = setTimeout(loop, POLL_MS);
       });
     };
@@ -860,10 +898,13 @@
     if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
   }
 
+  var sending = false;
   async function sendMsg() {
+    if (sending) return; // debounce: a send is already in flight
     var ta = document.getElementById("dsh-input");
     var text = (ta.value || "").trim();
     if (!text) return;
+    sending = true;
     ta.value = "";
     addMsg("user", text);
     setBusy(true);
@@ -884,6 +925,8 @@
     } catch (e) {
       addMsg("assistant", "[error] " + e);
       setBusy(false);
+    } finally {
+      sending = false;
     }
   }
 

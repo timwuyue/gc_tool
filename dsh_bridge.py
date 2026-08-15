@@ -107,8 +107,10 @@ async def dsh_events(request):
     except ValueError:
         since = -1
     try:
+        # Fetch a generous window so a reconnect/poll gap never drops events
+        # (chunk-level events arrive in bursts; 4 messages is far too small).
         r = await asyncio.to_thread(
-            _rpc, "session.history", {"sessionId": sid, "maxMessages": 4})
+            _rpc, "session.history", {"sessionId": sid, "maxMessages": 200})
         evs = (r.get("result") or {}).get("value", {}).get("events", [])
         out = []
         last = since
@@ -118,6 +120,9 @@ async def dsh_events(request):
             if seq > since:
                 out.append(ev)
                 last = max(last, seq)
+        # history may return newest-first; always hand events to the client in
+        # ascending seq order so streaming text is never scrambled
+        out.sort(key=lambda ev: ev.get("seq") or 0)
         return web.json_response({"ok": True, "events": out, "lastSeq": last})
     except Exception as e:
         _log.exception("dsh/events failed")
