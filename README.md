@@ -72,6 +72,16 @@ Windows 下可执行文件为 `llama-server.exe`，`--models-dir` 用绝对路�
 
 参数 `unload_models`（卸载模型）+ `clear_cache`（清缓存），等价于 ComfyUI 菜单"编辑 → 卸载模型 / 卸载模型和执行缓存"。带 `*` 透传输入/输出，可插在 workflow 任意位置。
 
+## DSH Agent Bridge（/dsh/*）
+
+本包内置一个 **DSH（DeepSeek Harness）Agent 桥接**：在 ComfyUI 页面右上角添加一个浮动按钮（"一掌劈开天"），点开即一个轻量聊天窗口，直连本机运行的 DSH 本体（`http://127.0.0.1:3080`）——即**完全体的 AI agent**（同模型 + 全套工具：读文件、跑命令、调 MCP、控制远程 GPU 等），全程无需任何 API key。
+
+- **聊天**：消息经 `POST /dsh/chat` 转发到 DSH `session.prompt`；回复通过 websocket（`/dsh/ws`，代理到 `events.mux`）**实时流式**显示，断线自动切换轮询兜底并重连
+- **交互卡片**：agent 的问题（`question/requested`）与权限审批（`approval/requested`）以可点击卡片呈现（选项 / 允许一次 / 拒绝），回答经 `POST /dsh/respond` 转发回 DSH
+- **文件查看**：`/dsh/view` 白名单内（工作区、ComfyUI `output`/`input`/`user`）的本地图片路径自动渲染为可点击缩略图，点开看大图
+- **窗口**：官方 DSH 图标、可拖动/缩放/最大化、位置记忆、最小化保留对话、Markdown 渲染（标题/表格/代码块/引用/链接）
+- **零配置**：模型凭据由 DSH 本体管理；只需 DSH 在 `127.0.0.1:3080` 运行（例如 `npx @deepseek-ai/dsh web`）。会话默认工作目录 `E:\ComfyTV`，`/dsh/view` 白名单可在 `dsh_bridge.py` 的 `allowed` 中调整
+
 ## 说明
 
 - 节点默认配置针对 `Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q8_0` 多模态模型，可通过设置面板修改
