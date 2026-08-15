@@ -959,6 +959,10 @@
         if (data.session.running) setBusy(true);
         var t = document.getElementById("dsh-title");
         if (t) t.textContent = WIN_TITLE + (sessionTitle ? " - " + sessionTitle : "");
+        // Now that we know the session, boot the event stream: this pulls
+        // recent history into the window and opens the realtime ws. Without
+        // this, the first open stays blank until the user sends a message.
+        startPoll();
       }
     } catch (e) {}
   }
