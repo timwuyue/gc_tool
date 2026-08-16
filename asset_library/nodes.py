@@ -155,47 +155,32 @@ class AssetLibrary:
     def INPUT_TYPES(cls) -> dict:
         return {
             "required": {
-                "directory": ("STRING", {
-                    "default": r"E:\Reasonix\ComfyUI-MCP-CLI\projects\dongfang\assets\资产库",
-                    "multiline": False,
-                }),
-            },
-            "optional": {
-                # Hidden widget written by the frontend after a multi-select
-                # upload: JSON array of card dicts. When present it wins over
-                # re-scanning `directory` (the upload flow owns the cards).
-                "_cards": ("STRING", {"default": "", "multiline": True}),
+                # Hidden widget written by the frontend after each multi-select
+                # upload: JSON array of card dicts (append-only; the frontend
+                # manages add/remove). No directory scanning anymore — the
+                # asset list is exactly what the user picked.
+                "_cards": ("STRING", {"default": "[]", "multiline": True}),
             },
         }
 
-    def load(self, directory: str, _cards: str = ""):
+    def load(self, _cards: str = "[]"):
         cards: list[dict] = []
-        cards_src = "upload"
         if _cards and _cards.strip():
             try:
                 parsed = json.loads(_cards)
                 if isinstance(parsed, list):
-                    cards = parsed
+                    cards = [c for c in parsed if isinstance(c, dict) and c.get("id")]
             except (ValueError, TypeError):
                 cards = []
-        if not cards:
-            cards = scan_directory(directory)
-            cards_src = "directory"
         # The library payload is what the picker node consumes; it holds the
         # same card metadata (paths are absolute; frontend uses them via
         # /gc_tool/asset_view). Catalog is a compact summary for debugging.
         payload = json.dumps(cards, ensure_ascii=False)
         catalog = json.dumps({
-            "directory": directory,
-            "source": cards_src,
             "count": len(cards),
-            "by_category": {
-                cat: sum(1 for c in cards if c["category"] == cat)
-                for cat in ("role", "scene", "prop", "asset")
-            },
             "cards": [
-                {"id": c["id"], "name": c["name"], "category": c["category"],
-                 "description": (c["description"] or "")[:120]}
+                {"id": c["id"], "name": c["name"], "category": c.get("category", "asset"),
+                 "description": (c.get("description") or "")[:120]}
                 for c in cards
             ],
         }, ensure_ascii=False)
