@@ -100,6 +100,35 @@ def scan_directory(directory: str) -> list[dict]:
     return cards
 
 
+def cards_from_files(files: list[str], root: str | None = None) -> list[dict]:
+    """Build card dicts from an explicit list of image files (uploaded ones).
+
+    `root` is the directory the files were uploaded to; rel_path is computed
+    against it (falls back to the bare filename). Same-name .md/.txt next to
+    each image are picked up as descriptions automatically — this lets a user
+    multi-select an image + its .md together in the file dialog.
+    """
+    root = os.path.abspath(root) if root else None
+    cards: list[dict] = []
+    for full in files:
+        ext = os.path.splitext(full)[1].lower()
+        if ext not in _IMG_EXT:
+            continue
+        rel = os.path.relpath(full, root) if root else os.path.basename(full)
+        cat = classify_path(rel)
+        name = os.path.splitext(os.path.basename(full))[0]
+        cards.append({
+            "id": f"{cat}:{name}",
+            "name": name,
+            "category": cat,
+            "image": full,
+            "description": _desc_for(full),
+            "rel_path": rel,
+        })
+    cards.sort(key=lambda c: (c["category"], c["name"].lower()))
+    return cards
+
+
 def _load_image_tensor(path: str):
     """Load an image file into a ComfyUI IMAGE tensor (1,H,W,3 float32)."""
     from PIL import Image
@@ -131,16 +160,34 @@ class AssetLibrary:
                     "multiline": False,
                 }),
             },
+            "optional": {
+                # Hidden widget written by the frontend after a multi-select
+                # upload: JSON array of card dicts. When present it wins over
+                # re-scanning `directory` (the upload flow owns the cards).
+                "_cards": ("STRING", {"default": "", "multiline": True}),
+            },
         }
 
-    def load(self, directory: str):
-        cards = scan_directory(directory)
+    def load(self, directory: str, _cards: str = ""):
+        cards: list[dict] = []
+        cards_src = "upload"
+        if _cards and _cards.strip():
+            try:
+                parsed = json.loads(_cards)
+                if isinstance(parsed, list):
+                    cards = parsed
+            except (ValueError, TypeError):
+                cards = []
+        if not cards:
+            cards = scan_directory(directory)
+            cards_src = "directory"
         # The library payload is what the picker node consumes; it holds the
         # same card metadata (paths are absolute; frontend uses them via
         # /gc_tool/asset_view). Catalog is a compact summary for debugging.
         payload = json.dumps(cards, ensure_ascii=False)
         catalog = json.dumps({
             "directory": directory,
+            "source": cards_src,
             "count": len(cards),
             "by_category": {
                 cat: sum(1 for c in cards if c["category"] == cat)

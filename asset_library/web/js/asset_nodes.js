@@ -281,17 +281,113 @@ function closeDirPicker() {
 	}
 }
 
+// Hidden file input for multi-select upload (one per node).
+let _fileInput = null;
+
+function ensureFileInput(node) {
+	if (_fileInput && _fileInput.__node === node) return _fileInput;
+	if (_fileInput) _fileInput.remove();
+	const input = document.createElement("input");
+	input.type = "file";
+	input.multiple = true;
+	input.accept = ".png,.jpg,.jpeg,.webp,.bmp,.gif,.md,.txt";
+	input.style.display = "none";
+	input.__node = node;
+	input.addEventListener("change", async () => {
+		const files = Array.from(input.files || []);
+		input.value = "";
+		if (!files.length) return;
+		await uploadAndRender(node, files);
+	});
+	document.body.appendChild(input);
+	_fileInput = input;
+	return input;
+}
+
+async function uploadAndRender(node, files) {
+	const container = node.__alContainer;
+	if (!container) return;
+	container.innerHTML = "";
+	container.appendChild(el("div", "gc-al-status", `上传 ${files.length} 个文件…`));
+	try {
+		const fd = new FormData();
+		for (const f of files) fd.append("files", f, f.name);
+		const resp = await fetch("/gc_tool/upload_assets", {
+			method: "POST",
+			body: fd,
+		});
+		const data = await resp.json();
+		container.innerHTML = "";
+		if (!data.ok) {
+			container.appendChild(el("div", "gc-al-status", "错误: " + (data.error || "unknown")));
+			return;
+		}
+		renderCardWall(node, data.cards || [], data.directory || "");
+	} catch (e) {
+		container.innerHTML = "";
+		container.appendChild(el("div", "gc-al-status", "上传失败: " + e));
+	}
+}
+
+// Shared card-wall renderer for scanned OR uploaded cards.
+function renderCardWall(node, cards, directory) {
+	const container = node.__alContainer;
+	if (!container) return;
+	container.innerHTML = "";
+	// remember the payload for the picker to consume: store the cards JSON in
+	// the hidden `_cards` widget; AssetLibrary.load() reads it at execution.
+	const cardsJson = JSON.stringify(cards, (k, v) => k === "image_url" || k === "desc_url" ? undefined : v);
+	const hidden = node.widgets.find((w) => w.name === "_cards");
+	if (hidden) hidden.value = cardsJson;
+
+	const catRow = el("div", "gc-al-cats");
+	const cats = ["role", "scene", "prop", "asset"];
+	let activeCat = "all";
+	const catMap = {};
+	for (const c of cards) { catMap[c.category] = (catMap[c.category] || 0) + 1; }
+
+	function renderGrid() {
+		container.querySelectorAll(".gc-al-gridwrap, .gc-al-countrow").forEach((x) => x.remove());
+		const wrap = el("div", "gc-al-gridwrap");
+		const shown = activeCat === "all" ? cards : cards.filter((c) => c.category === activeCat);
+		wrap.appendChild(buildCardGrid(shown, { pickable: false }));
+		const count = el("div", "gc-al-status gc-al-countrow", `共 ${cards.length} 张卡片 · 当前 ${shown.length} 张`);
+		container.appendChild(count);
+		container.appendChild(wrap);
+	}
+
+	const allBtn = el("span", "gc-al-cat sel", `全部(${cards.length})`);
+	allBtn.onclick = () => { activeCat = "all"; selCat(allBtn); renderGrid(); };
+	catRow.appendChild(allBtn);
+	for (const c of cats) {
+		const n = catMap[c] || 0;
+		if (!n) continue;
+		const b = el("span", "gc-al-cat", `${c}(${n})`);
+		b.onclick = () => { activeCat = c; selCat(b); renderGrid(); };
+		catRow.appendChild(b);
+	}
+	function selCat(btn) {
+		catRow.querySelectorAll(".gc-al-cat, .gc-al-cat.sel").forEach((x) => x.classList.remove("sel"));
+		btn.classList.add("sel");
+	}
+	container.appendChild(catRow);
+	renderGrid();
+	resizeNodeToContent(node, container);
+	setTimeout(() => resizeNodeToContent(node, container), 80);
+}
+
 function attachLibraryNode(node) {
-	node.addWidget("button", "browse", null, () => {
+	// primary: multi-select file upload
+	node.addWidget("button", "选择图片", null, () => {
+		ensureFileInput(node).click();
+	});
+	// secondary: directory scan (kept for bulk imports)
+	node.addWidget("button", "浏览目录", null, () => {
 		openDirPicker(node, (p) => {
 			const dir = node.widgets.find((w) => w.name === "directory");
 			if (dir) { dir.value = p; dir.callback?.(p); }
 			scanAndRender(node, p);
 		});
-	});
-	node.addWidget("button", "scan", null, () => {
-		const dir = node.widgets.find((w) => w.name === "directory");
-		scanAndRender(node, dir ? dir.value : "");
 	});
 }
 
@@ -304,8 +400,7 @@ async function scanAndRender(node, directory) {
 		return;
 	}
 	container.innerHTML = "";
-	const status = el("div", "gc-al-status", "扫描中…");
-	container.appendChild(status);
+	container.appendChild(el("div", "gc-al-status", "扫描中…"));
 	try {
 		const resp = await fetch(SCAN_URL, {
 			method: "POST",
@@ -313,50 +408,12 @@ async function scanAndRender(node, directory) {
 			body: JSON.stringify({ directory }),
 		});
 		const data = await resp.json();
-		container.innerHTML = "";
 		if (!data.ok) {
+			container.innerHTML = "";
 			container.appendChild(el("div", "gc-al-status", "错误: " + (data.error || "unknown")));
 			return;
 		}
-		statusRemove(container);
-		const cards = data.cards || [];
-		const catRow = el("div", "gc-al-cats");
-		const cats = ["role", "scene", "prop", "asset"];
-		let activeCat = "all";
-		const catMap = {};
-		for (const c of cards) { catMap[c.category] = (catMap[c.category] || 0) + 1; }
-
-		function renderGrid() {
-			// remove previous count row + grid wrap before re-adding
-			container.querySelectorAll(".gc-al-gridwrap, .gc-al-countrow").forEach((x) => x.remove());
-			const wrap = el("div", "gc-al-gridwrap");
-			const shown = activeCat === "all" ? cards : cards.filter((c) => c.category === activeCat);
-			wrap.appendChild(buildCardGrid(shown, { pickable: false }));
-			const count = el("div", "gc-al-status gc-al-countrow", `共 ${cards.length} 张卡片 · 当前 ${shown.length} 张`);
-			container.appendChild(count);
-			container.appendChild(wrap);
-		}
-
-		const allBtn = el("span", "gc-al-cat sel", `全部(${cards.length})`);
-		allBtn.onclick = () => { activeCat = "all"; selCat(allBtn); renderGrid(); };
-		catRow.appendChild(allBtn);
-		for (const c of cats) {
-			const n = catMap[c] || 0;
-			if (!n) continue;
-			const b = el("span", "gc-al-cat", `${c}(${n})`);
-			b.onclick = () => { activeCat = c; selCat(b); renderGrid(); };
-			catRow.appendChild(b);
-		}
-		function selCat(btn) {
-			catRow.querySelectorAll(".gc-al-cat, .gc-al-cat.sel").forEach((x) => x.classList.remove("sel"));
-			btn.classList.add("sel");
-		}
-		container.appendChild(catRow);
-		renderGrid();
-		// mark dirty so the node resizes
-		resizeNodeToContent(node, container);
-		// second pass after layout settles (DOM widget may not be mounted yet)
-		setTimeout(() => resizeNodeToContent(node, container), 80);
+		renderCardWall(node, data.cards || [], data.directory || "");
 	} catch (e) {
 		container.innerHTML = "";
 		container.appendChild(el("div", "gc-al-status", "扫描失败: " + e));

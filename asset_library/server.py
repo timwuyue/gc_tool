@@ -21,7 +21,7 @@ from pathlib import Path
 from aiohttp import web
 from server import PromptServer
 
-from .nodes import _IMG_EXT, scan_directory
+from .nodes import _IMG_EXT, cards_from_files, scan_directory
 
 _log = None  # lazy logger not required; keep module import light
 
@@ -47,6 +47,77 @@ async def scan_assets(request: web.Request) -> web.Response:
         if c.get("description"):
             c["desc_url"] = f"/gc_tool/asset_view?path={_quote(_desc_path(c['image']))}"
     return web.json_response({"ok": True, "directory": directory,
+                              "count": len(cards), "cards": cards})
+
+
+# Session folder for uploaded asset files (per ComfyUI instance, reused).
+_SESSION_DIR: str | None = None
+
+
+def _session_dir() -> str:
+    global _SESSION_DIR
+    if _SESSION_DIR is None:
+        try:
+            import folder_paths
+            base = folder_paths.get_temp_directory()
+        except Exception:
+            base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tmp")
+        _SESSION_DIR = os.path.join(base, "gc_asset_upload")
+        os.makedirs(_SESSION_DIR, exist_ok=True)
+    return _SESSION_DIR
+
+
+@routes.post("/gc_tool/upload_assets")
+async def upload_assets(request: web.Request) -> web.Response:
+    """Accept a multipart upload of asset files (images + optional same-name
+    .md/.txt), store them in a session folder and return card metadata.
+
+    Field name: `files` (repeated). Serves the multi-select file-dialog flow:
+    the browser cannot hand over absolute paths, so we take the files
+    themselves instead of a directory scan.
+    """
+    session_dir = _session_dir()
+    saved: list[str] = []
+    try:
+        reader = await request.multipart()
+        while True:
+            part = await reader.next()
+            if part is None:
+                break
+            if part.name != "files":
+                continue
+            fname = os.path.basename(str(part.filename or "file"))
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in _IMG_EXT and ext not in (".md", ".txt"):
+                continue
+            # de-dup name in the session folder
+            dest = os.path.join(session_dir, fname)
+            i = 1
+            base, e = os.path.splitext(fname)
+            while os.path.exists(dest):
+                dest = os.path.join(session_dir, f"{base}_{i}{e}")
+                i += 1
+            with open(dest, "wb") as f:
+                while True:
+                    chunk = await part.read_chunk(1024 * 512)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+            saved.append(dest)
+    except Exception as e:
+        return web.json_response({"error": f"upload failed: {e}"}, status=400)
+
+    if not saved:
+        return web.json_response(
+            {"error": "no valid files uploaded (accepts images + .md/.txt)"},
+            status=400)
+
+    cards = cards_from_files(saved, root=session_dir)
+    for c in cards:
+        c["image_url"] = f"/gc_tool/asset_view?path={_quote(c['image'])}"
+        if c.get("description"):
+            c["desc_url"] = f"/gc_tool/asset_view?path={_quote(_desc_path(c['image']))}"
+    return web.json_response({"ok": True, "directory": session_dir,
                               "count": len(cards), "cards": cards})
 
 
