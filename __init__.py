@@ -3,23 +3,22 @@
 # custom_nodes/.
 from .llama_mini.nodes import LlamaMini
 from .unload.nodes import ModelUnload
-from .asset_library.nodes import AssetLibrary, AssetPicker
+from .multi_image.nodes import MultiImageLoader
 
 NODE_CLASS_MAPPINGS = {
     "llama_mini": LlamaMini,
     "unload_clear": ModelUnload,
-    "GC_AssetLibrary": AssetLibrary,
-    "GC_AssetPicker": AssetPicker,
+    "GC_MultiImageLoader": MultiImageLoader,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "llama_mini": "llama_mini",
     "unload_clear": "unload_clear",
-    "GC_AssetLibrary": "资产库 (Asset Library)",
-    "GC_AssetPicker": "资产选择器 (Asset Picker)",
+    "GC_MultiImageLoader": "多图加载 (Multi Image Loader)",
 }
 
-# Frontend extension directory (settings + dsh.js), relative to this package.
+# Frontend extension directory (settings + dsh.js + multi_image.js), relative
+# to this package.
 WEB_DIRECTORY = "./llama_mini/web"
 
 # DSH bridge: routes /dsh/* (chat proxy to the DSH agent harness at
@@ -27,9 +26,7 @@ WEB_DIRECTORY = "./llama_mini/web"
 # viewer). Importing this module registers the routes on PromptServer.
 from . import dsh_bridge as _dsh_bridge  # noqa: F401
 
-# Asset library: routes /gc_tool/* (scan_assets / asset_view / asset_desc)
-# and the asset node frontend extension. Importing the subpackage registers
-# both the nodes (already mapped above) and the routes.
-from . import asset_library as _asset_library  # noqa: F401
+# Multi-image loader: routes /gc_tool/upload_images and the node frontend.
+from . import multi_image as _multi_image  # noqa: F401
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
