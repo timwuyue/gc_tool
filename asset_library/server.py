@@ -50,6 +50,78 @@ async def scan_assets(request: web.Request) -> web.Response:
                               "count": len(cards), "cards": cards})
 
 
+@routes.post("/gc_tool/open_folder")
+async def open_folder(request: web.Request) -> web.Response:
+    """Open the system file explorer at `path` (best-effort helper for the
+    folder picker: browsers cannot show a native directory dialog, so we let
+    the user inspect the real folder and copy the path back)."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    path = str(body.get("path") or "").strip()
+    if not path or not os.path.isdir(path):
+        # fall back to a reasonable root
+        path = os.path.expanduser("~")
+    try:
+        if os.name == "nt":
+            os.startfile(path)  # type: ignore[attr-defined]
+        else:
+            import subprocess
+            subprocess.Popen(["xdg-open", path])
+        return web.json_response({"ok": True, "opened": path})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)})
+
+
+@routes.post("/gc_tool/list_dir")
+async def list_dir(request: web.Request) -> web.Response:
+    """List subdirectories of `path` for a folder-picker dialog.
+
+    Body: {path}  ('' or omitted = list drive roots on Windows)
+    Returns: {ok, path, parent, entries:[{name, path, has_cards}]}
+    has_cards = the subdir (recursively) contains at least one image card.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    path = str(body.get("path") or "").strip()
+
+    if not path:
+        # Windows drive roots
+        import string
+        entries = []
+        for letter in string.ascii_uppercase:
+            root = f"{letter}:\\"
+            if os.path.isdir(root):
+                entries.append({"name": root, "path": root, "has_cards": False})
+        return web.json_response({"ok": True, "path": "", "parent": None,
+                                  "home": os.path.expanduser("~"),
+                                  "entries": entries})
+
+    if not os.path.isdir(path):
+        return web.json_response({"error": f"not a directory: {path}"}, status=400)
+
+    parent = os.path.dirname(path.rstrip("\\/")) or None
+    entries = []
+    try:
+        names = sorted(os.listdir(path))
+    except OSError:
+        names = []
+    for name in names:
+        sub = os.path.join(path, name)
+        if not os.path.isdir(sub):
+            continue
+        has_cards = bool(scan_directory(sub))
+        entries.append({"name": name, "path": sub, "has_cards": has_cards})
+    # dirs with cards first, then alphabetical
+    entries.sort(key=lambda e: (not e["has_cards"], e["name"].lower()))
+    return web.json_response({"ok": True, "path": path, "parent": parent,
+                              "home": os.path.expanduser("~"),
+                              "entries": entries})
+
+
 @routes.get("/gc_tool/asset_view")
 async def asset_view(request: web.Request) -> web.Response:
     path = request.query.get("path", "")

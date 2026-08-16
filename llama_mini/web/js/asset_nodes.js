@@ -66,6 +66,7 @@ function cssInject() {
 
 function buildCardGrid(cards, { pickable, selected, onToggle }) {
 	const grid = el("div", "gc-al-grid");
+	selected = selected || new Set();
 	for (const c of cards) {
 		const card = el("div", "gc-al-card" + (selected.has(c.id) ? " sel" : ""));
 		card.dataset.id = c.id;
@@ -98,7 +99,196 @@ function buildCardGrid(cards, { pickable, selected, onToggle }) {
 // ---------------------------------------------------------------------------
 // GC_AssetLibrary node
 
+// --- folder picker dialog ------------------------------------------------
+
+let _activeDirPicker = null;
+
+function openDirPicker(node, onPick) {
+	closeDirPicker();
+	const overlay = el("div");
+	overlay.style.cssText =
+		"position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.55);" +
+		"display:flex;align-items:center;justify-content:center;";
+	const box = el("div");
+	box.style.cssText =
+		"background:#161b22;border:1px solid rgba(255,255,255,.18);border-radius:10px;" +
+		"width:520px;max-width:92vw;max-height:80vh;display:flex;flex-direction:column;" +
+		"box-shadow:0 8px 40px rgba(0,0,0,.6);overflow:hidden;";
+	const head = el("div");
+	head.style.cssText =
+		"display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.1);";
+	head.appendChild(el("span", null, "选择资产库目录"));
+	const curPath = el("span");
+	curPath.style.cssText = "flex:1;color:#8b949e;font-size:11px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+	head.appendChild(curPath);
+	const closeBtn = el("button", null, "✕");
+	closeBtn.style.cssText = "background:none;border:none;color:#8b949e;cursor:pointer;font-size:14px;";
+	closeBtn.onclick = closeDirPicker;
+	head.appendChild(closeBtn);
+	box.appendChild(head);
+
+	// quick locations bar (home path fetched lazily from backend)
+	const quickBar = el("div");
+	quickBar.style.cssText =
+		"display:flex;gap:5px;flex-wrap:wrap;padding:6px 10px;border-bottom:1px solid rgba(255,255,255,.08);";
+	let homePath = "";
+	fetch("/gc_tool/list_dir", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ path: "" }),
+	})
+		.then((r) => r.json())
+		.then((d) => { if (d.ok && d.home) homePath = d.home; })
+		.catch(() => {});
+	const QUICK_LOCATIONS = [
+		{ name: "E:\\", path: "E:\\" },
+		{ name: "D:\\", path: "D:\\" },
+		{ name: "C:\\", path: "C:\\" },
+		{ name: "用户目录", path: () => homePath },
+		{ name: "资产库示例", path: "E:\\Reasonix\\ComfyUI-MCP-CLI\\projects\\dongfang\\assets\\资产库" },
+	];
+	for (const q of QUICK_LOCATIONS) {
+		const chip = el("span", null, q.name);
+		chip.style.cssText =
+			"background:#21262d;border:1px solid rgba(255,255,255,.12);color:#93c5fd;border-radius:8px;" +
+			"padding:2px 9px;font-size:10px;cursor:pointer;";
+		chip.onmouseenter = () => { chip.style.borderColor = "#60a5fa"; };
+		chip.onmouseleave = () => { chip.style.borderColor = "rgba(255,255,255,.12)"; };
+		chip.onclick = () => {
+			const p = typeof q.path === "function" ? q.path() : q.path;
+			if (p) loadDir(p);
+		};
+		quickBar.appendChild(chip);
+	}
+	box.appendChild(quickBar);
+
+	const body = el("div");
+	body.style.cssText = "flex:1;overflow-y:auto;padding:8px;min-height:200px;";
+	box.appendChild(body);
+
+	const foot = el("div");
+	foot.style.cssText = "display:flex;gap:8px;padding:10px 12px;border-top:1px solid rgba(255,255,255,.1);align-items:center;";
+	const pathInput = el("input");
+	pathInput.type = "text";
+	pathInput.style.cssText = "flex:1;background:#0d1117;color:#e6edf3;border:1px solid rgba(255,255,255,.15);border-radius:4px;padding:5px 8px;font-size:11px;";
+	pathInput.placeholder = "目录路径（可直接粘贴，如 E:\\assets）";
+	foot.appendChild(pathInput);
+	// open in system explorer (helper; browsers can't return a picked path)
+	const explorerBtn = el("button", null, "打开资源管理器");
+	explorerBtn.style.cssText = "background:#2d3748;color:#e6edf3;border:none;border-radius:4px;padding:5px 10px;cursor:pointer;font-size:11px;";
+	explorerBtn.title = "在系统资源管理器中打开当前目录（辅助确认路径，然后复制回来粘贴）";
+	explorerBtn.onclick = () => {
+		const p = (pathInput.value || "").trim();
+		fetch("/gc_tool/open_folder", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: p || undefined }),
+		}).catch(() => {});
+	};
+	foot.appendChild(explorerBtn);
+	const goBtn = el("button", null, "打开");
+	goBtn.style.cssText = "background:#3b82f6;color:#fff;border:none;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:11px;";
+	goBtn.onclick = () => { pathInput.value = pathInput.value.trim(); loadDir(pathInput.value); };
+	foot.appendChild(goBtn);
+	const pickBtn = el("button", null, "选择此目录");
+	pickBtn.style.cssText = "background:#22c55e;color:#fff;border:none;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:11px;";
+	pickBtn.onclick = () => {
+		const p = (pathInput.value || "").trim();
+		if (!p) return;
+		onPick(p);
+		closeDirPicker();
+	};
+	foot.appendChild(pickBtn);
+	box.appendChild(foot);
+
+	overlay.appendChild(box);
+	document.body.appendChild(overlay);
+	_activeDirPicker = { overlay, body, pathInput, curPath };
+
+	overlay.onclick = (e) => { if (e.target === overlay) closeDirPicker(); };
+
+	async function loadDir(p) {
+		if (!p) p = "";
+		let data;
+		try {
+			const resp = await fetch("/gc_tool/list_dir", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ path: p }),
+			});
+			data = await resp.json();
+		} catch (e) {
+			body.innerHTML = "";
+			body.appendChild(el("div", "gc-al-status", "列举失败: " + e));
+			return;
+		}
+		if (!data.ok) {
+			body.innerHTML = "";
+			body.appendChild(el("div", "gc-al-status", "错误: " + (data.error || "unknown")));
+			return;
+		}
+		pathInput.value = data.path || "";
+		curPath.textContent = data.path || "(驱动器)";
+		body.innerHTML = "";
+		const rows = data.entries || [];
+		if (data.parent) {
+			rows.unshift({ name: ".. (上级目录)", path: data.parent, has_cards: false, isUp: true });
+		}
+		if (!rows.length) {
+			body.appendChild(el("div", "gc-al-status", "（空目录）"));
+		}
+		for (const r of rows) {
+			const row = el("div");
+			row.style.cssText =
+				"display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:5px;cursor:pointer;" +
+				"font-size:12px;color:#e6edf3;" + (r.has_cards ? "background:rgba(34,197,94,.08);" : "");
+			row.onmouseenter = () => { row.style.background = r.has_cards ? "rgba(34,197,94,.16)" : "rgba(255,255,255,.06)"; };
+			row.onmouseleave = () => { row.style.background = r.has_cards ? "rgba(34,197,94,.08)" : ""; };
+			const ico = el("span", null, r.isUp ? "↰" : (r.has_cards ? "📁✓" : "📁"));
+			ico.style.cssText = "flex:0 0 auto;";
+			const name = el("span", null, r.name);
+			name.style.cssText = "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+			const badge = r.has_cards ? el("span", null, "有卡片") : null;
+			if (badge) badge.style.cssText = "color:#4ade80;font-size:10px;flex:0 0 auto;";
+			row.appendChild(ico);
+			row.appendChild(name);
+			if (badge) row.appendChild(badge);
+			row.onclick = () => {
+				// single click: enter dir; double-click on a card dir picks it
+				if (r.isUp) { loadDir(r.path); return; }
+				if (r.has_cards) {
+					pathInput.value = r.path;
+					curPath.textContent = r.path;
+					pickBtn.style.display = "";
+					loadDir(r.path); // still let them drill in
+				} else {
+					loadDir(r.path);
+				}
+			};
+			body.appendChild(row);
+		}
+	}
+
+	// start at the node's current directory (or drives)
+	const cur = (node.widgets.find((w) => w.name === "directory") || {}).value || "";
+	loadDir(cur);
+}
+
+function closeDirPicker() {
+	if (_activeDirPicker) {
+		_activeDirPicker.overlay.remove();
+		_activeDirPicker = null;
+	}
+}
+
 function attachLibraryNode(node) {
+	node.addWidget("button", "browse", null, () => {
+		openDirPicker(node, (p) => {
+			const dir = node.widgets.find((w) => w.name === "directory");
+			if (dir) { dir.value = p; dir.callback?.(p); }
+			scanAndRender(node, p);
+		});
+	});
 	node.addWidget("button", "scan", null, () => {
 		const dir = node.widgets.find((w) => w.name === "directory");
 		scanAndRender(node, dir ? dir.value : "");
@@ -137,13 +327,13 @@ async function scanAndRender(node, directory) {
 		for (const c of cards) { catMap[c.category] = (catMap[c.category] || 0) + 1; }
 
 		function renderGrid() {
-			const gridWrap = container.querySelector(".gc-al-gridwrap");
-			if (gridWrap) gridWrap.remove();
+			// remove previous count row + grid wrap before re-adding
+			container.querySelectorAll(".gc-al-gridwrap, .gc-al-countrow").forEach((x) => x.remove());
 			const wrap = el("div", "gc-al-gridwrap");
 			const shown = activeCat === "all" ? cards : cards.filter((c) => c.category === activeCat);
 			wrap.appendChild(buildCardGrid(shown, { pickable: false }));
-			const count = el("div", "gc-al-status", `共 ${cards.length} 张卡片 · 当前 ${shown.length} 张`);
-			container.insertBefore(count, wrap);
+			const count = el("div", "gc-al-status gc-al-countrow", `共 ${cards.length} 张卡片 · 当前 ${shown.length} 张`);
+			container.appendChild(count);
 			container.appendChild(wrap);
 		}
 
@@ -305,6 +495,7 @@ app.registerExtension({
 			nodeType.prototype.onNodeCreated = function () {
 				const r = onNodeCreated?.apply(this, arguments);
 				cssInject();
+				attachLibraryNode(this);
 				// body container for the card wall
 				const container = el("div", "gc-al-root");
 				this.__alContainer = container;
