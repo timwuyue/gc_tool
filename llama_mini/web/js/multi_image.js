@@ -212,6 +212,17 @@ function resizeNodeToContent(node, container) {
 	if (node.setDirtyCanvas) node.setDirtyCanvas(true, true);
 }
 
+// hide the two state widgets (must run after widgets exist and after load)
+function hideStateWidgets(node) {
+	for (const name of ["image_paths", "selected"]) {
+		const w = node.widgets?.find((x) => x.name === name);
+		if (w) {
+			w.hidden = true;
+			w.options = { ...(w.options || {}), hidden: true };
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // extension registration
 
@@ -226,11 +237,7 @@ app.registerExtension({
 			this.addWidget("button", "选择图片", null, () => {
 				ensureFileInput(this).click();
 			});
-			// hide the two state widgets
-			for (const name of ["image_paths", "selected"]) {
-				const w = this.widgets.find((x) => x.name === name);
-				if (w) w.hidden = true;
-			}
+			hideStateWidgets(this);
 			const container = el("div", "gc-mi-root");
 			this.__alContainer = container;
 			this.addDOMWidget("multi_image_view", "multi_image_view", container, {
@@ -245,8 +252,16 @@ app.registerExtension({
 			});
 			container.style.minHeight = "60px";
 			this.__miResize = () => resizeNodeToContent(this, container);
+			// re-hide after any configure/load (widgets are recreated from
+			// the serialized workflow, so hidden must be re-applied)
+			const onConfigure = this.onConfigure;
+			this.onConfigure = function () {
+				onConfigure?.apply(this, arguments);
+				hideStateWidgets(this);
+				return r;
+			};
 			// restore previous state
-			setTimeout(() => render(this), 120);
+			setTimeout(() => { hideStateWidgets(this); render(this); }, 120);
 			return r;
 		};
 	},

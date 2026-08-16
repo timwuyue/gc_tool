@@ -22,16 +22,34 @@ import folder_paths
 
 
 def _load_image_tensor(path: str):
-    """Load an image file into a ComfyUI IMAGE tensor (1,H,W,3 float32)."""
+    """Load an image file into a PIL RGB image (kept separate so sizes can be
+    unified before batching)."""
     from PIL import Image
-    import numpy as np
-    import torch
 
     img = Image.open(path)
     if img.mode != "RGB":
         img = img.convert("RGB")
-    arr = np.asarray(img, dtype=np.float32) / 255.0
-    return torch.from_numpy(arr)[None, ...]
+    return img
+
+
+def _batch_tensors(imgs: list):
+    """Convert PIL images to a unified IMAGE batch tensor: every image is
+    resized to the FIRST image's size (LANCZOS), so mixed resolutions are
+    batched safely."""
+    from PIL import Image
+    import numpy as np
+    import torch
+
+    if not imgs:
+        return None
+    target = imgs[0].size  # (w, h)
+    tensors = []
+    for img in imgs:
+        if img.size != target:
+            img = img.resize(target, Image.LANCZOS)
+        arr = np.asarray(img, dtype=np.float32) / 255.0
+        tensors.append(torch.from_numpy(arr)[None, ...])
+    return torch.cat(tensors, dim=0)
 
 
 class MultiImageLoader:
@@ -69,33 +87,27 @@ class MultiImageLoader:
         # keep order of paths, only ticked ones
         emit = [p for p in paths if p in sel]
 
-        tensors = []
-        for p in emit:
-            if not p or not os.path.isfile(p):
-                continue
-            try:
-                tensors.append(_load_image_tensor(p))
-            except Exception:
-                continue
+        def _load_imgs(plist: list):
+            out = []
+            for p in plist:
+                if not p or not os.path.isfile(p):
+                    continue
+                try:
+                    out.append(_load_image_tensor(p))
+                except Exception:
+                    continue
+            return out
 
-        if not tensors:
+        emit_imgs = _load_imgs(emit)
+        if not emit_imgs:
             raise RuntimeError(
                 "GC_MultiImageLoader: no valid images — click 选择图片 to load "
                 "files, then tick the ones to output (or leave all ticked)."
             )
+        batch = _batch_tensors(emit_imgs)
 
-        import torch
-        batch = torch.cat(tensors, dim=0)
-
-        # all_images = everything loaded (useful for previews / side chains)
-        all_tensors = []
-        for p in paths:
-            if p and os.path.isfile(p):
-                try:
-                    all_tensors.append(_load_image_tensor(p))
-                except Exception:
-                    continue
-        all_batch = torch.cat(all_tensors, dim=0) if all_tensors else batch
+        all_imgs = _load_imgs(paths)
+        all_batch = _batch_tensors(all_imgs) if all_imgs else batch
         return (batch, all_batch)
 
 
