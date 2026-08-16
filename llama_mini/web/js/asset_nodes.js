@@ -355,6 +355,8 @@ async function scanAndRender(node, directory) {
 		renderGrid();
 		// mark dirty so the node resizes
 		resizeNodeToContent(node, container);
+		// second pass after layout settles (DOM widget may not be mounted yet)
+		setTimeout(() => resizeNodeToContent(node, container), 80);
 	} catch (e) {
 		container.innerHTML = "";
 		container.appendChild(el("div", "gc-al-status", "扫描失败: " + e));
@@ -368,20 +370,22 @@ function statusRemove(container) {
 }
 
 // Resize the node to fit its DOM widget content. Works in default (legacy)
-// node mode where DOM widgets don't auto-expand the node box: we measure the
-// container, hand the height to the widget via its stored callback, then
-// recompute + mark dirty so the canvas redraws at the new size.
+// node mode where DOM widgets don't auto-expand the node box. We let the
+// widget's computeSize report the container height, then ask the node for its
+// full computed size (title + all widgets) and apply it.
 function resizeNodeToContent(node, container) {
 	if (!node || !container) return;
-	const w = node.widgets?.find((x) => x.type === "asset_library_view" || x.type === "asset_picker_view");
-	if (w && typeof w.computeSize === "function") {
-		const sz = w.computeSize(node.size[0]);
-		if (Array.isArray(sz) && sz[1]) {
-			node.setSize([node.size[0], Math.max(sz[1], 80)]);
-		}
+	if (typeof node.computeSize === "function") {
+		try {
+			const sz = node.computeSize(node.size[0]);
+			if (Array.isArray(sz) && sz[0] && sz[1]) {
+				node.setSize([Math.max(sz[0], node.size[0]), Math.max(sz[1], 80)]);
+			}
+		} catch (e) { /* keep current size on failure */ }
 	}
 	node.onResize?.(node.size);
 	node.graph?.setDirtyCanvas?.(true, true);
+	if (node.setDirtyCanvas) node.setDirtyCanvas(true, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -500,6 +504,7 @@ function renderPickerCards(node, cards) {
 	container.appendChild(catRow);
 	container.appendChild(gridWrap);
 	resizeNodeToContent(node, container);
+	setTimeout(() => resizeNodeToContent(node, container), 80);
 }
 
 // ---------------------------------------------------------------------------
@@ -520,6 +525,7 @@ app.registerExtension({
 				const domWidget = this.addDOMWidget("asset_library_view", "asset_library_view", container, {
 					getMinHeight: () => 60,
 					getMaxHeight: () => 640,
+					getHeight: () => Math.min(Math.max((container.scrollHeight || 60) + 12, 80), 640),
 					hideOnZoom: false,
 					computeSize: (width) => {
 						const h = container.scrollHeight || 60;
@@ -527,6 +533,7 @@ app.registerExtension({
 					},
 				});
 				domWidget.serialize = false;
+				container.style.minHeight = "60px";
 				this.__alResize = () => resizeNodeToContent(this, container);
 				// scan on creation if a directory is already set
 				const dir = this.widgets.find((w) => w.name === "directory");
@@ -549,6 +556,7 @@ app.registerExtension({
 				const domWidget = this.addDOMWidget("asset_picker_view", "asset_picker_view", container, {
 					getMinHeight: () => 60,
 					getMaxHeight: () => 640,
+					getHeight: () => Math.min(Math.max((container.scrollHeight || 60) + 12, 80), 640),
 					hideOnZoom: false,
 					computeSize: (width) => {
 						const h = container.scrollHeight || 60;
@@ -556,6 +564,7 @@ app.registerExtension({
 					},
 				});
 				domWidget.serialize = false;
+				container.style.minHeight = "60px";
 				this.__alResize = () => resizeNodeToContent(this, container);
 				// try to render from the wired library once available
 				const tryRender = () => {

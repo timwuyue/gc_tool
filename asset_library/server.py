@@ -21,7 +21,7 @@ from pathlib import Path
 from aiohttp import web
 from server import PromptServer
 
-from .nodes import scan_directory
+from .nodes import _IMG_EXT, scan_directory
 
 _log = None  # lazy logger not required; keep module import light
 
