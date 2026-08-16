@@ -74,13 +74,36 @@ async def open_folder(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": str(e)})
 
 
+def _dir_has_cards_shallow(path: str, depth: int = 3) -> bool:
+    """Cheap check: does this dir (up to `depth` levels down) contain any
+    image file? Covers layouts like 资产库/角色卡/xxx.png (3 levels) without
+    a full recursive walk of huge trees. Returns on the first hit."""
+    if depth <= 0:
+        return False
+    try:
+        with os.scandir(path) as it:
+            for entry in it:
+                try:
+                    if entry.is_file():
+                        if os.path.splitext(entry.name)[1].lower() in _IMG_EXT:
+                            return True
+                    elif entry.is_dir() and _dir_has_cards_shallow(entry.path, depth - 1):
+                        return True
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return False
+
+
 @routes.post("/gc_tool/list_dir")
 async def list_dir(request: web.Request) -> web.Response:
     """List subdirectories of `path` for a folder-picker dialog.
 
     Body: {path}  ('' or omitted = list drive roots on Windows)
     Returns: {ok, path, parent, entries:[{name, path, has_cards}]}
-    has_cards = the subdir (recursively) contains at least one image card.
+    has_cards = the subdir DIRECTLY contains at least one image file
+    (shallow check; deep content is confirmed when scanning for real).
     """
     try:
         body = await request.json()
@@ -113,8 +136,8 @@ async def list_dir(request: web.Request) -> web.Response:
         sub = os.path.join(path, name)
         if not os.path.isdir(sub):
             continue
-        has_cards = bool(scan_directory(sub))
-        entries.append({"name": name, "path": sub, "has_cards": has_cards})
+        entries.append({"name": name, "path": sub,
+                        "has_cards": _dir_has_cards_shallow(sub)})
     # dirs with cards first, then alphabetical
     entries.sort(key=lambda e: (not e["has_cards"], e["name"].lower()))
     return web.json_response({"ok": True, "path": path, "parent": parent,
